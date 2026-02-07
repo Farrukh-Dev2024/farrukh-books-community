@@ -1,0 +1,7 @@
+9:58 pm 05/01/2026
+work paused tired
+will be restored from following
+- company-backups-page   working progress
+- restore-mapping-page.tsx   chatgpt instruction yet to be read and follow
+- restore-stats-page  chatgpt instruction yet to be read and follow
+

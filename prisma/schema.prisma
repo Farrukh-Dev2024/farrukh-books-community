@@ -1,0 +1,779 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+// =====================
+// 🧍 USER & COMPANY CORE
+// =====================
+
+model User {
+  id          Int       @id @default(autoincrement())
+  companyId   Int?
+  companyRole Int       @default(7)
+  name        String?
+  email       String    @unique
+  password    String
+  userRole    Int       @default(2) // 2=User, 1=Admin, 0=SuperAdmin
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLogin   DateTime?
+  logs        String?
+  isBanned    Boolean   @default(false)
+  isDeleted   Boolean   @default(false)
+  messages    String?
+  avatarUrl   String?
+
+  forceLogoutAt   DateTime?
+
+  imageUploadCount    Int       @default(0)
+  lastImageUploadDate DateTime?
+
+  // Relations
+  company  Company?  @relation("CompanyUsers", fields: [companyId], references: [id])
+  journals Journal[] @relation("JournalChangedBy")
+  Images   Image[]   @relation("UserImages")
+
+  CustomersCreatedBy Customer[] @relation("CustomerCreatedBy")
+  CustomersUpdatedBy Customer[] @relation("CustomerUpdatedBy")
+
+  SalesOrdersCreatedBy SalesOrder[] @relation("SalesOrderCreatedBy")
+  SalesOrdersUpdatedBy SalesOrder[] @relation("SalesOrderUpdatedBy")
+
+  VendorsCreatedBy Vendor[] @relation("VendorCreatedBy")
+  VendorsUpdatedBy Vendor[] @relation("VendorUpdatedBy")
+
+  PurchaseOrdersCreatedBy PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
+  PurchaseOrdersUpdatedBy PurchaseOrder[] @relation("PurchaseOrderUpdatedBy")
+  payRuns PayRun[] @relation("PayRunApprovedBy")
+
+
+  @@index([email])
+  @@index([isDeleted])
+  @@index([updatedAt])
+  
+  subscriptionsUpgradeRequested SubscriptionUpgradeRequest[] @relation("RequestedByUser")
+  subscriptionsUpgradeReviewed SubscriptionUpgradeRequest[] @relation("ReviewedByUser")
+}
+
+model AdminAuditLog {
+  id                 Int      @id @default(autoincrement())
+  action             String
+  performedBy        Int   // user id of actor
+  targetUserId       Int?  // optional
+  targetCompanyId    Int?  // optional
+  entityId           String?  // generic entity reference (subscription, backup, etc.)
+  entityType         String?  // 'User', 'Company', 'Subscription', 'Backup', etc.
+  impersonatedUserId Int?  // optional, Phase 7
+  meta               Json?    // optional JSON for details (amounts, reason, status, etc.)
+  createdAt          DateTime @default(now())
+}
+
+model Company {
+  id          Int      @id @default(autoincrement())
+  title       String?
+  description String?
+  ownerId     Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  extraData     String?
+  isDeleted   Boolean  @default(false)
+  avatarUrl   String?
+  businessType Int @default(0) //0=Soleproprietorship 1=Partnership 2=company
+
+  currencyCode   String   @default("USD") // ISO 4217
+  currencySymbol String   @default("$")
+  currencyName   String   @default("US Dollar")
+
+  isSuspended Boolean @default(false)
+  isRestoring Boolean @default(false) // for backup restores
+  
+  // Relations
+  users            User[]            @relation("CompanyUsers")
+  invites          CompanyInvite[]   @relation("InvitesToCompany")
+  accounts         Account[]         @relation("CompanyAccounts")
+  journals         Journal[]         @relation("CompanyJournals")
+  ProductCategorys ProductCategory[]
+  Products         Product[]
+
+  Customers        Customer[]
+  SalesOrders      SalesOrder[]
+  Vendors          Vendor[]
+  PurchaseOrders   PurchaseOrder[]
+
+  PayItems        PayItem[]
+  PayrollEmployees PayrollEmployee[]
+  PayRuns         PayRun[]
+  PayrollSetting  PayrollSetting?
+
+  @@index([isDeleted])
+  @@index([updatedAt])
+  
+  paySlips PaySlip[]
+  paySlipItems PaySlipItem[]
+  companySubscriptions CompanySubscription[]
+  companySubscriptionUsageDailies CompanySubscriptionUsageDaily[]
+  companySubscriptionUsageMonthlies CompanySubscriptionUsageMonthly[]
+  subscriptionUpgradeRequests SubscriptionUpgradeRequest[]
+  payrollEmployeePayItems PayrollEmployeePayItem[]
+  payrollEmployeeAttendances PayrollEmployeeAttendance[]
+}
+
+model CompanyInvite {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  email       String   @unique
+  title       String
+  description String
+  role        Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isDeleted   Boolean  @default(false)
+  isRejected  Boolean  @default(false)
+  isAccepted  Boolean  @default(false)
+
+  company Company @relation("InvitesToCompany", fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([isDeleted])
+  @@index([updatedAt])
+}
+
+// =====================
+// 🧾 ACCOUNTING CORE
+// =====================
+
+model Journal {
+  id                 Int      @id @default(autoincrement())
+  transactionId      Int
+  companyId          Int
+  accountId          Int
+  side               Boolean // true = Debit, false = Credit
+  amount             Decimal  @db.Decimal(18, 2)
+  description        String
+  entryDate          DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  lastChangeByUserId Int
+  extraData          String?
+  isDeleted          Boolean  @default(false)
+
+  // Relations
+  company           Company @relation("CompanyJournals", fields: [companyId], references: [id], onDelete: Cascade)
+  account           Account @relation(fields: [accountId], references: [id])
+  lastChangedByUser User?   @relation("JournalChangedBy", fields: [lastChangeByUserId], references: [id])
+  //StockMovements    StockMovement[]
+
+  @@index([transactionId])
+  @@index([companyId])
+  @@index([accountId])
+  @@index([isDeleted])
+  @@index([updatedAt])
+}
+
+model Account {
+  id             Int    @id @default(autoincrement())
+  companyId      Int
+  accountType    Int
+  accountSubType Int
+  title          String
+  description    String
+  avatarUrl      String?
+  side           Boolean // true = Debit, false = Credit
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  extraData      String?
+  permissions    String?
+  isDeleted      Boolean  @default(false)
+  balance        Decimal  @default(0)
+
+  // Relations
+  company        Company   @relation("CompanyAccounts", fields: [companyId], references: [id], onDelete: Cascade)
+  journalEntries Journal[]
+
+  @@index([isDeleted])
+  @@index([companyId])
+  @@index([updatedAt])
+}
+
+model Image {
+  id        String  @id @default(cuid())
+  userId    Int
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation("UserImages", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// =====================
+// 📦 INVENTORY MANAGEMENT
+// =====================
+
+model ProductCategory {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isDeleted   Boolean  @default(false)
+  extraData     String?
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@index([companyId])
+  @@index([isDeleted])
+}
+
+model Product {
+  id              Int      @id @default(autoincrement())
+  companyId       Int
+  categoryId      Int?
+  sku             String   
+  barcode         String?   // ✅ optional barcode support
+  title           String
+  description     String?
+  costPrice       Decimal  @db.Decimal(18, 2)
+  sellingPrice    Decimal  @db.Decimal(18, 2)
+  stockQuantity   Int  @default(0)
+  reorderLevel    Int  @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  isDeleted       Boolean  @default(false)
+  extraData       String?
+  defaultLocation String?
+
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category           ProductCategory?    @relation(fields: [categoryId], references: [id])
+  salesOrderItems    SalesOrderItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+
+
+  @@unique([companyId, sku])
+  @@unique([companyId, barcode])
+
+  @@index([companyId])
+  @@index([isDeleted])
+}
+
+// =====================
+// 💰 SALES & PURCHASES
+// =====================
+
+model Customer {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  accountId1   Int
+  accountId2   Int
+  name        String
+  email       String?  
+  phone       String?
+  address     String?
+  city        String?
+  country     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isDeleted   Boolean  @default(false)
+  extraData     String?
+  createdById Int
+  updatedById Int
+
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  salesOrders   SalesOrder[]
+  
+  createdBy User @relation("CustomerCreatedBy", fields: [createdById], references: [id])
+  updatedBy User @relation("CustomerUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([companyId, email])  
+}
+
+
+
+model SalesOrder {
+  id            Int      @id @default(autoincrement())
+  companyId     Int
+  customerId    Int
+  orderNumber   String    
+  orderStatus   String
+  discountAmount Decimal  @db.Decimal(18, 2) // ✅ new field
+  totalAmount   Decimal   @db.Decimal(18, 2)
+  paidAmount   Decimal   @db.Decimal(18, 2)
+  dateIssued    DateTime  @default(now())
+  dueDate       DateTime?
+  transactionId Int?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  isDeleted     Boolean   @default(false)
+  extraData     String?
+  orderComments      String?
+  createdById   Int
+  updatedById   Int
+
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer  Customer         @relation(fields: [customerId], references: [id])
+  items     SalesOrderItem[]
+  createdBy User             @relation("SalesOrderCreatedBy", fields: [createdById], references: [id])
+  updatedBy User             @relation("SalesOrderUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([companyId, orderNumber]) 
+}
+
+model SalesOrderItem {
+  id           Int     @id @default(autoincrement())
+  companyId    Int
+  salesOrderId Int
+  productId    Int
+  transactionId Int?
+  quantity     Decimal
+  unitPrice    Decimal  @db.Decimal(18, 2)
+  totalPrice   Decimal  @db.Decimal(18, 2)
+  discountAmount  Decimal   @db.Decimal(18, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  isDeleted    Boolean  @default(false)
+  extraData    String?
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model Vendor {
+  id        Int    @id @default(autoincrement())
+  companyId Int
+  accountId1   Int
+  accountId2   Int
+  name      String
+  email     String? 
+  phone     String?
+  address   String?
+  city      String?
+  country   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isDeleted Boolean  @default(false)
+  extraData String?
+  createdById Int
+  updatedById Int
+
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+  createdBy User @relation("VendorCreatedBy", fields: [createdById], references: [id])
+  updatedBy User @relation("VendorUpdatedBy", fields: [updatedById], references: [id])  
+
+  @@unique([companyId, email]) 
+}
+
+model PurchaseOrder {
+  id             Int       @id @default(autoincrement())
+  companyId      Int
+  vendorId       Int
+  orderNumber    String
+  orderStatus    String   
+  totalAmount    Decimal   @default(0)
+  paidAmount    Decimal   @default(0)
+  discountAmount Decimal  @db.Decimal(18, 2) // ✅ new field
+  dueDate        DateTime?
+  orderComments      String?
+  dateIssued     DateTime  @default(now())
+  createdById    Int
+  updatedById    Int
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  isDeleted      Boolean   @default(false)
+  transactionId  Int?      // future link to journal
+
+  vendor         Vendor    @relation(fields: [vendorId], references: [id])
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy      User      @relation("PurchaseOrderCreatedBy", fields: [createdById], references: [id])
+  updatedBy      User      @relation("PurchaseOrderUpdatedBy", fields: [updatedById], references: [id])
+  items          PurchaseOrderItem[]
+}
+
+
+model PurchaseOrderItem {
+  id              Int      @id @default(autoincrement())
+  companyId       Int
+  purchaseOrderId Int
+  transactionId  Int?
+  productId       Int
+  quantity        Int
+  unitCost        Decimal   @db.Decimal(18, 2)
+  totalCost       Decimal   @db.Decimal(18, 2)
+  discountAmount  Decimal   @db.Decimal(18, 2) 
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  isDeleted       Boolean   @default(false)
+  extraData       String?
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+
+
+model PayrollEmployee {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  accountId1   Int
+  accountId2   Int
+  
+  firstName String
+  lastName  String?
+  email     String?
+  phone     String?
+
+  baseSalary Decimal
+  salaryType String   // Monthly or Hourly
+  joinDate   DateTime
+  status     String   // ACTIVE / INACTIVE / TERMINATED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdById Int
+  updatedById Int
+  isDeleted   Boolean  @default(false)
+
+  assignedPayItems PayrollEmployeePayItem[]
+  paySlips         PaySlip[]
+
+  payrollEmployeeAttendances PayrollEmployeeAttendance[]
+}
+
+
+
+model PayRun {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  periodStart DateTime
+  periodEnd   DateTime
+  status      String @default("DRAFT") // DRAFT / APPROVED / POSTED
+
+  /* NEW FIELDS FOR APPROVAL & LOCKING */
+  approved        Boolean    @default(false)
+  approvedByUserId Int?
+  approvedAt      DateTime?
+  isLocked        Boolean    @default(false)
+  approvedBy      User?      @relation("PayRunApprovedBy", fields: [approvedByUserId], references: [id])
+
+  transactionId   Int?
+  cashedOut       Boolean?     @default(false)  
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isDeleted Boolean  @default(false)
+
+  // ⭐ Added fields
+  totalGross       Decimal? @db.Decimal(18,2)
+  totalDeductions  Decimal? @db.Decimal(18,2)
+  totalNet         Decimal? @db.Decimal(18,2)
+
+  paySlips PaySlip[]
+  @@index([companyId])
+}
+
+
+model PaySlip {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  payRunId Int
+  payRun   PayRun     @relation(fields: [payRunId], references: [id], onDelete: Cascade) // ⭐ Added Cascade
+
+  employeeId Int
+  employee   PayrollEmployee  @relation(fields: [employeeId], references: [id])
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  basicPay       Decimal   @db.Decimal(18,2)
+  totalAllowances Decimal  @db.Decimal(18,2)
+  totalDeductions Decimal  @db.Decimal(18,2)
+  grossPay       Decimal   @db.Decimal(18,2)
+  netPay         Decimal   @db.Decimal(18,2)
+
+    /* NEW: LOCKING */
+  isLocked         Boolean     @default(false)
+
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  status String @default("DRAFT") // DRAFT / APPROVED / POSTED
+  excluded Boolean @default(false)
+
+  paySlipItems PaySlipItem[]
+
+  @@index([payRunId])
+  @@index([companyId])  
+}
+
+
+
+model PaySlipItem {
+  id         Int      @id @default(autoincrement())
+
+  // ⭐ Added
+  companyId  Int
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  paySlipId  Int
+  paySlip    PaySlip  @relation(fields: [paySlipId], references: [id], onDelete: Cascade)
+
+  title      String
+  type       String   // ALLOWANCE / DEDUCTION  (UNCHANGED)
+  mode      String   // "FIXED" or "PERCENTAGE"
+  amount     Decimal  @db.Decimal(18,2)
+
+   /* NEW: LOCKING */
+  isLocked         Boolean    @default(false) 
+
+  // ⭐ Added
+  isDeleted  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  payItems PayItem[]
+
+}
+
+
+
+model PayrollSetting {
+  id        Int     @id @default(autoincrement())
+  companyId Int     @unique
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  payCycle    String @default("MONTHLY") // DAILY / WEEKLY / MONTHLY
+  roundingMode String @default("NONE")   // NONE / NEAREST / UP / DOWN
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isDeleted   Boolean  @default(false)
+}
+//---------------------------------------
+
+model PayItem {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  title     String
+  type      String   // "ALLOWANCE" or "DEDUCTION"
+  mode      String   // "FIXED" or "PERCENTAGE"
+  defaultAmount Decimal?
+
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isDeleted Boolean @default(false)
+
+  employeeAssignments PayrollEmployeePayItem[]
+  payslipItems        PaySlipItem[]
+}
+
+model PayrollEmployeePayItem {
+  id          Int       @id @default(autoincrement())
+  companyId   Int
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employeeId  Int
+  payItemId   Int
+  amount      Decimal?
+  isPercentage Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  isDeleted   Boolean  @default(false)
+  employee    PayrollEmployee @relation(fields: [employeeId], references: [id])
+  payItem     PayItem         @relation(fields: [payItemId], references: [id])
+}
+
+model PayrollEmployeeAttendance {
+  id         Int       @id @default(autoincrement())
+  companyId   Int 
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  employee   PayrollEmployee @relation(fields: [employeeId], references: [id])
+  employeeId Int
+  date       DateTime
+  status     String     // 'Present', 'Absent', 'HalfDay', 'Leave'
+  checkIn    DateTime?  // optional
+  checkOut   DateTime?  // optional
+  dailyNote  String?    // optional text note
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@unique([employeeId, date], name: "employeeId_date")
+  @@index([companyId, date])
+}
+
+// =====================
+// start subscriptions module udpate
+// =====================
+model SubscriptionPlan {
+  id                   Int      @id @default(autoincrement())
+  code                 String   @unique // FREE, STARTER, PREMIUM, ENTERPRISE, CUSTOM_SERVER, WEBSITE_TESTER
+  name                 String
+
+  // Pricing (manual now, Stripe later)
+  monthlyPrice         Decimal?
+  yearlyPrice          Decimal?
+
+  // Limits (null = unlimited)
+  maxInvites           Int?
+  dailyTransactionLimit Int?
+  monthlyBackupLimit   Int?
+
+  // Features
+  canViewAllReports    Boolean  @default(false)
+
+  // Behavior flags
+  isAutoPlan           Boolean  @default(false) // Free
+  isAdminOnly          Boolean  @default(false) // Website Tester
+  autoExpireDays       Int?     // e.g. 30 for Website Tester
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  subscriptions        CompanySubscription[]
+
+  /** Requests where this plan is the TARGET (upgrade to) */
+  requestedUpgradeRequests SubscriptionUpgradeRequest[] @relation("RequestedPlan")
+
+  /** Requests where this plan is the CURRENT plan */
+  currentUpgradeRequests   SubscriptionUpgradeRequest[] @relation("CurrentPlan")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  GRACE
+  EXPIRED
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+model CompanySubscription {
+  id               Int      @id @default(autoincrement())
+
+  companyId        Int      @unique
+  subscriptionPlanId Int
+
+  status           SubscriptionStatus
+  billingCycle     BillingCycle
+
+  startedAt        DateTime
+  endsAt           DateTime
+  graceEndsAt      DateTime?
+  canceledAt       DateTime?
+
+  // Manual billing now, Stripe later
+  externalRef      String?
+
+  createdByUserId  Int  
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  subscriptionPlan SubscriptionPlan  @relation(fields: [subscriptionPlanId], references: [id])
+
+  @@index([subscriptionPlanId])
+}
+
+model CompanySubscriptionUsageDaily {
+  id                    Int      @id @default(autoincrement())
+
+  companyId             Int
+  date                  DateTime // normalized to start of day (server timezone)
+
+  journalEntryCount     Int      @default(0)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  company               Company  @relation(fields: [companyId], references: [id],onDelete: Cascade)
+
+  @@unique([companyId, date])
+}
+
+model CompanySubscriptionUsageMonthly {
+  id              Int      @id @default(autoincrement())
+  companyId       Int
+  year            Int
+  month           Int      // 1–12
+
+  backupCount     Int      @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  company         Company  @relation(fields: [companyId], references: [id],onDelete: Cascade)
+
+  @@unique([companyId, year, month])
+}
+
+
+model SubscriptionUpgradeRequest {
+  id                  Int      @id @default(autoincrement())
+
+  // Company + Plan references
+  companyId           Int
+  currentPlanId       Int
+  requestedPlanId     Int
+
+  // Request metadata
+  status              UpgradeRequestStatus @default(PENDING)
+  note                String?
+  requestedByUserId   Int
+  createdAt           DateTime @default(now())
+
+  // Admin review / resolution
+  reviewedAt          DateTime?             // When admin approved/rejected
+  reviewedByUserId    Int?                  // Admin user ID who resolved
+  // Relations
+  requestedByUser   User                  @relation("RequestedByUser", fields: [requestedByUserId], references: [id])
+  reviewedByUser    User?                 @relation("ReviewedByUser", fields: [reviewedByUserId], references: [id])
+  company             Company               @relation(fields: [companyId], references: [id],onDelete: Cascade)
+  requestedPlan       SubscriptionPlan      @relation("RequestedPlan", fields: [requestedPlanId], references: [id])
+  currentPlan         SubscriptionPlan      @relation("CurrentPlan", fields: [currentPlanId], references: [id])
+
+  // Indexes
+  @@index([companyId])
+}
+
+
+enum UpgradeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+
+// =====================
+// end subscriptions module udpate
+// =====================
